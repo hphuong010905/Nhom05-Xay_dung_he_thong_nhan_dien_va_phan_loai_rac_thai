@@ -34,5 +34,10 @@ return [
             'channel' => env('SLACK_BOT_USER_DEFAULT_CHANNEL'),
         ],
     ],
+    //Thêm ddaonj cho phép test dữ liệu giả
+    'ai_api' => [
+    'url' => env('AI_API_URL', 'http://127.0.0.1:8000'),
+    'use_fake' => env('USE_FAKE_AI', true),
+    ],
 
 ];
