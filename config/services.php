@@ -36,7 +36,7 @@ return [
     ],
     //Thêm ddaonj cho phép test dữ liệu giả
     'ai_api' => [
-    'url' => env('AI_API_URL', 'http://127.0.0.1:8000'),
+    'url' => env('AI_API_URL', 'http://127.0.0.1:8000'), # Laravel sẽ lấy đường dẫn API từ .env
     'use_fake' => env('USE_FAKE_AI', true),
     ],
 
