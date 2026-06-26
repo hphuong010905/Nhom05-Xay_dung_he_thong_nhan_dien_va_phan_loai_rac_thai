@@ -143,7 +143,7 @@ class WasteController extends Controller
             $displayClass = 'Rác hữu cơ';
             $suggestion = 'Vui lòng bỏ vào thùng rác hữu cơ hoặc thùng rác màu xanh lá.';
         } elseif ($class === 'Tai_che') {
-            $displayClass = 'Rác cái chế';
+            $displayClass = 'Rác tái chế';
             $suggestion = 'Vui lòng bỏ vào thùng rác tái chế.';
         } elseif ($class === 'Vo_co') {
             $displayClass = 'Rác vô cơ / Nguy hại';
