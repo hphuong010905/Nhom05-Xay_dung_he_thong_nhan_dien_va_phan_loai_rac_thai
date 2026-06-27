@@ -1,160 +1,200 @@
 <?php
 
 namespace App\Http\Controllers;
-# import thư viện. Request dùng để lấy dữ liệu người dùng gửi lên
-# ví dụ ảnh upload hoặc ảnh camera. HTTP dùng để Laravel gửi request
-# sang API python của Ngọc
+
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class WasteController extends Controller
 {
-    public function index() # Hàm dùng để hiển thị giao diện chính
+    public function index()
     {
         return view('home');
     }
 
-    # hàm xử lý ảnh do người dùng gửi lên từ tab "Tải ảnh"
     public function detectUpload(Request $request)
     {
-        $request->validate([
-            # bắt buộc chọn phải là ảnh | file tải lên phải là hình ảnh | chỉ cho phép các định dạng ảnh này | Dung lượng ảnh tối đa là 5MB
-            'image' => 'required|image|mimes:jpg,jpeg,png,webp|max:5120',# Kiểm tra ảnh có hợp lệ không
-        ], [
-            'image.required' => 'Vui lòng chọn ảnh cần nhận diện.',
-            'image.image' => 'Tệp tải lên phải là hình ảnh.',
-            'image.mimes' => 'Ảnh phải có định dạng jpg, jpeg, png hoặc webp.',
-            'image.max' => 'Dung lượng ảnh không được vượt quá 5MB.',
-        ]);
+        try {
+            $request->validate([
+                'image' => 'required|image|mimes:jpg,jpeg,png,webp|max:10240',
+            ]);
 
-        // Khi chưa có API AI thật thì dùng kết quả giả
-        if (config('services.ai_api.use_fake')) {
-            $result = [
-                'class' => 'Tai_che',
-                'confidence' => 0.96,
-            ];
-        } else {
-            try {
-                # Lấy file ảnh do người dùng tải lên
-                $image = $request->file('image');
-                
-                # Gửi ảnh sang API AI
-                $response = Http::attach(
-                    'file',
-                    file_get_contents($image->getRealPath()), # Đọc nội dung thật của file ảnh
-                    $image->getClientOriginalName()# Lấy tên file ảnh gốc
-                )->post(config('services.ai_api.url') . '/predict');# Gửi ảnh bằng phương thức POST đến API
+            $image = $request->file('image');
 
-                # Kiểm tra API có phản hồi thành công không
-                if (!$response->successful()) {
-                    return back()->with('error', 'API AI chưa phản hồi thành công. Vui lòng kiểm tra lại API của Ngọc.');
-                }
+            $previewImage = 'data:' . $image->getMimeType() . ';base64,' . base64_encode(
+                file_get_contents($image->getRealPath())
+            );
 
-                # Nhận JSON từ API
-                $result = $response->json();
-            } catch (\Exception $e) {
-                return back()->with('error', 'Không thể kết nối đến API AI: ' . $e->getMessage());
+            $aiResult = $this->sendImageToAiApi(
+                $image->getRealPath(),
+                $image->getClientOriginalName()
+            );
+
+            if (!$aiResult['success']) {
+                return redirect()
+                    ->route('home')
+                    ->with('error', $aiResult['message'])
+                    ->with('preview_image', $previewImage);
             }
-        }
-        # Nếu API trả về đúng định dạng JSON thì Laravel chuyển thành mảng PHP
-        $displayData = $this->formatResult($result);
 
-        return back()->with([
-            'class' => $displayData['class'],
-            'display_class' => $displayData['display_class'],
-            'confidence' => $displayData['confidence_percent'],
-            'suggestion' => $displayData['suggestion'],
-        ]);
+            return redirect()
+                ->route('home')
+                ->with('result', $aiResult['data'])
+                ->with('preview_image', $previewImage);
+
+        } catch (\Throwable $e) {
+            Log::error('Lỗi nhận diện ảnh tải lên: ' . $e->getMessage());
+
+            return redirect()
+                ->route('home')
+                ->with('error', 'Lỗi khi xử lý ảnh tải lên: ' . $e->getMessage());
+        }
     }
 
-    # Hàm xử lý ảnh chụp từ camera
-    # Do camera nhận ảnh dưới dạng chuỗi Base64 nên cần xử lý trước khi gửi sang API
     public function detectCamera(Request $request)
     {
-        $request->validate([
-            'image' => 'required|string', # hàm xử lý ảnh
-        ]);
+        try {
+            $request->validate([
+                'captured_image' => 'required|string',
+            ]);
 
-        // Khi chưa có API AI thật thì dùng kết quả giả
-        if (config('services.ai_api.use_fake')) {
-            $result = [
-                'class' => 'Tai_che',
-                'confidence' => 0.96,
-            ];
-        } else {
-            try {
-                $imageData = $request->input('image');
+            $base64Image = $request->input('captured_image');
 
-                // Xóa phần mở đầu dạng: data:image/png;base64,
-                $imageData = preg_replace('/^data:image\/\w+;base64,/', '', $imageData);# Xóa phần đầu <data:image/png;base64,> chỉ giữ lại phần dự liệu ảnh thật
-                $imageBinary = base64_decode($imageData);# chuyển thành dữ liệu dạng nhị phân
-
-                $response = Http::attach(
-                    'file',
-                    $imageBinary,
-                    'camera-frame.png'
-                )->post(config('services.ai_api.url') . '/predict'); # Dùng hàm POST để gửi ảnh sang API
-
-                if (!$response->successful()) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'API AI chưa phản hồi thành công.',
-                    ], 500);
-                }
-
-                $result = $response->json();
-            } catch (\Exception $e) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Không thể kết nối đến API AI: ' . $e->getMessage(),
-                ], 500);
+            if (!str_contains($base64Image, ',')) {
+                return redirect()
+                    ->route('home')
+                    ->with('error', 'Dữ liệu ảnh từ camera không hợp lệ.');
             }
+
+            [$meta, $imageData] = explode(',', $base64Image, 2);
+
+            $binaryImage = base64_decode($imageData);
+
+            if ($binaryImage === false) {
+                return redirect()
+                    ->route('home')
+                    ->with('error', 'Không thể giải mã ảnh từ camera.');
+            }
+
+            $tempDir = storage_path('app/temp');
+
+            if (!is_dir($tempDir)) {
+                mkdir($tempDir, 0777, true);
+            }
+
+            $tempPath = $tempDir . '/camera_' . time() . '.png';
+
+            file_put_contents($tempPath, $binaryImage);
+
+            $aiResult = $this->sendImageToAiApi($tempPath, 'camera_image.png');
+
+            if (file_exists($tempPath)) {
+                unlink($tempPath);
+            }
+
+            if (!$aiResult['success']) {
+                return redirect()
+                    ->route('home')
+                    ->with('error', $aiResult['message'])
+                    ->with('preview_image', $base64Image);
+            }
+
+            return redirect()
+                ->route('home')
+                ->with('result', $aiResult['data'])
+                ->with('preview_image', $base64Image);
+
+        } catch (\Throwable $e) {
+            Log::error('Lỗi nhận diện ảnh camera: ' . $e->getMessage());
+
+            return redirect()
+                ->route('home')
+                ->with('error', 'Lỗi khi xử lý ảnh camera: ' . $e->getMessage());
         }
-
-        # Hàm dùng để chuẩn hóa kết quả từ API
-        $displayData = $this->formatResult($result);
-
-        return response()->json([
-            'success' => true,
-            'class' => $displayData['class'],
-            'display_class' => $displayData['display_class'],
-            'confidence' => $displayData['confidence_percent'],
-            'suggestion' => $displayData['suggestion'],
-        ]);
     }
 
-    # Hàm để đổi dữ liệu. Lấy nhãn rác từ API. Nếu API không trả class thì dùng mặc định là "Không xác định"
-    private function formatResult(array $result)
+    private function sendImageToAiApi(string $imagePath, string $fileName): array
     {
-        $class = $result['class'] ?? 'Khong_xac_dinh';
-        $confidence = $result['confidence'] ?? 0;# Lấy độ tin cậy nếu không có thì để là 0
+        try {
+            $apiBaseUrl = rtrim(env('AI_API_URL', 'http://127.0.0.1:8000'), '/');
+            $apiUrl = $apiBaseUrl . '/predict';
 
-        // Nếu API trả confidence dạng 0.96 thì đổi thành 96
-        // Nếu API trả sẵn 96 thì giữ nguyên
-        $confidencePercent = $confidence <= 1
-            ? round($confidence * 100, 2) # Xử lý giao diện hiển thị thành 96%
-            : round($confidence, 2);
+            if (!file_exists($imagePath)) {
+                return [
+                    'success' => false,
+                    'message' => 'Không tìm thấy file ảnh để gửi sang API AI.',
+                ];
+            }
 
-        $displayClass = 'Không xác định';
-        $suggestion = 'Cần kiểm tra lại kết quả phân loại.';
-        
-        # Nếu API trả Huu_co thì hiển thị Rác hữu cơ, tương tự với 2 loại rác còn lại
-        if ($class === 'Huu_co') {
-            $displayClass = 'Rác hữu cơ';
-            $suggestion = 'Vui lòng bỏ vào thùng rác hữu cơ hoặc thùng rác màu xanh lá.';
-        } elseif ($class === 'Tai_che') {
-            $displayClass = 'Rác cái chế';
-            $suggestion = 'Vui lòng bỏ vào thùng rác tái chế.';
-        } elseif ($class === 'Vo_co') {
-            $displayClass = 'Rác vô cơ / Nguy hại';
-            $suggestion = 'Vui lòng bỏ vào thùng rác vô cơ hoặc khu vực xử lý rác nguy hại.';
+            $response = Http::timeout(60)
+                ->attach(
+                    'file',
+                    fopen($imagePath, 'r'),
+                    $fileName
+                )
+                ->post($apiUrl);
+
+            if (!$response->successful()) {
+                return [
+                    'success' => false,
+                    'message' => 'API AI trả lỗi HTTP ' . $response->status() . ': ' . $response->body(),
+                ];
+            }
+
+            $json = $response->json();
+
+            if (!is_array($json)) {
+                return [
+                    'success' => false,
+                    'message' => 'API AI không trả về dữ liệu JSON hợp lệ. Nội dung trả về: ' . $response->body(),
+                ];
+            }
+
+            if (isset($json['success']) && $json['success'] === false) {
+                return [
+                    'success' => false,
+                    'message' => $json['message'] ?? 'API AI báo lỗi nhưng không có nội dung chi tiết.',
+                ];
+            }
+
+            $class = $json['class'] ?? null;
+            $specificClass = $json['specific_class'] ?? null;
+            $confidence = $json['confidence'] ?? null;
+
+            if ($class === null) {
+                return [
+                    'success' => false,
+                    'message' => 'API AI chưa trả về trường class. Dữ liệu nhận được: ' . json_encode($json, JSON_UNESCAPED_UNICODE),
+                ];
+            }
+
+            if ($confidence === null) {
+                $confidence = 0;
+            }
+
+            $confidence = (float) $confidence;
+
+            if ($confidence <= 1) {
+                $confidence = $confidence * 100;
+            }
+
+            return [
+                'success' => true,
+                'data' => [
+                    'class' => $class,
+                    'specific_class' => $specificClass,
+                    'confidence' => round($confidence, 2),
+                ],
+            ];
+
+        } catch (\Throwable $e) {
+            Log::error('Lỗi gọi API AI: ' . $e->getMessage());
+
+            return [
+                'success' => false,
+                'message' => 'Không gọi được API AI. Kiểm tra API Flask đã chạy ở http://127.0.0.1:8000 chưa. Chi tiết lỗi: ' . $e->getMessage(),
+            ];
         }
-
-        return [
-            'class' => $class,
-            'display_class' => $displayClass,
-            'confidence_percent' => $confidencePercent,
-            'suggestion' => $suggestion,
-        ];
     }
 }
